@@ -1,4 +1,4 @@
-const STORAGE_KEY = "neon-integration-grid-v1";
+const API_BASE = "/api";
 
 const state = {
   clients: [],
@@ -25,9 +25,9 @@ const el = {
 
 init();
 
-function init() {
-  loadState();
+async function init() {
   bindEvents();
+  await refreshClients();
   render();
 }
 
@@ -44,55 +44,55 @@ function bindEvents() {
     render();
   });
 
-  el.clearData.addEventListener("click", () => {
+  el.clearData.addEventListener("click", async () => {
     if (!confirm("Delete all clients and progress data?")) {
       return;
     }
 
-    state.clients = [];
-    state.selectedClientId = null;
-    persistState();
-    render();
+    try {
+      await api("/clients", { method: "DELETE" });
+      state.clients = [];
+      state.selectedClientId = null;
+      render();
+    } catch (error) {
+      reportError(error);
+    }
   });
 
   el.seedDemo.addEventListener("click", seedDemoData);
 }
 
-function handleCreateClient(event) {
+async function handleCreateClient(event) {
   event.preventDefault();
   const formData = new FormData(event.currentTarget);
 
-  const client = {
-    id: crypto.randomUUID(),
+  const payload = {
     name: toCleanString(formData.get("name")),
     contact: toCleanString(formData.get("contact")),
     integrationType: toCleanString(formData.get("integrationType")),
     priority: toCleanString(formData.get("priority")),
-    status: "Not Started",
-    parts: parseCsvItems(formData.get("parts")).map((name) => ({
-      id: crypto.randomUUID(),
-      name,
-      status: "Not Started",
-    })),
-    steps: parseCsvItems(formData.get("steps")).map((title) => ({
-      id: crypto.randomUUID(),
-      title,
-      done: false,
-    })),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    parts: parseCsvItems(formData.get("parts")),
+    steps: parseCsvItems(formData.get("steps")),
   };
 
-  if (!client.name || client.parts.length === 0 || client.steps.length === 0) {
+  if (!payload.name || payload.parts.length === 0 || payload.steps.length === 0) {
     alert("Please provide client name, at least one part, and at least one step.");
     return;
   }
 
-  state.clients.unshift(client);
-  state.selectedClientId = client.id;
-  event.currentTarget.reset();
-  persistState();
-  render();
+  try {
+    const created = await api("/clients", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    state.selectedClientId = created.id;
+    event.currentTarget.reset();
+    await refreshClients();
+    render();
+  } catch (error) {
+    reportError(error);
+  }
 }
 
 function parseCsvItems(raw) {
@@ -104,6 +104,40 @@ function parseCsvItems(raw) {
 
 function toCleanString(value) {
   return String(value || "").trim();
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed: ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return response.json();
+  }
+
+  return null;
+}
+
+function reportError(error) {
+  console.error(error);
+  alert("Unable to sync with server. Check backend/API connection.");
+}
+
+async function refreshClients() {
+  state.clients = await api("/clients");
+  if (!state.clients.some((client) => client.id === state.selectedClientId)) {
+    state.selectedClientId = state.clients[0]?.id || null;
+  }
 }
 
 function getStage(client) {
@@ -279,48 +313,87 @@ function renderDetail() {
 
 function wireDetailInteractions(clientId) {
   const overall = document.getElementById("overall-status");
-  overall?.addEventListener("change", (event) => {
-    updateClient(clientId, (client) => {
-      client.status = event.target.value;
-    });
+  overall?.addEventListener("change", async (event) => {
+    try {
+      await api(`/clients/${clientId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: event.target.value }),
+      });
+      await refreshClients();
+      render();
+    } catch (error) {
+      reportError(error);
+    }
   });
 
   document.querySelectorAll(".part-status-select").forEach((select) => {
-    select.addEventListener("change", (event) => {
+    select.addEventListener("change", async (event) => {
       const partId = event.target.dataset.partId;
-      updateClient(clientId, (client) => {
-        const part = client.parts.find((item) => item.id === partId);
-        if (!part) {
-          return;
-        }
-        part.status = event.target.value;
-      });
+      try {
+        await api(`/clients/${clientId}/parts/${partId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: event.target.value }),
+        });
+        await refreshClients();
+        render();
+      } catch (error) {
+        reportError(error);
+      }
     });
   });
 
   document.querySelectorAll(".step-toggle").forEach((checkbox) => {
-    checkbox.addEventListener("change", (event) => {
+    checkbox.addEventListener("change", async (event) => {
       const stepId = event.target.dataset.stepId;
-      updateClient(clientId, (client) => {
-        const step = client.steps.find((item) => item.id === stepId);
-        if (!step) {
-          return;
-        }
-        step.done = event.target.checked;
+      const selected = getSelectedClient();
+      if (!selected) {
+        return;
+      }
 
-        const progress = getProgress(client);
-        if (progress === 0) {
-          client.status = "Not Started";
-        } else if (progress === 100) {
-          client.status = "Completed";
-        } else if (client.status === "Not Started" || client.status === "Completed") {
-          client.status = "In Progress";
+      const simulated = {
+        ...selected,
+        steps: selected.steps.map((step) =>
+          step.id === stepId
+            ? {
+                ...step,
+                done: event.target.checked,
+              }
+            : step
+        ),
+      };
+
+      let nextStatus = selected.status;
+      const progress = getProgress(simulated);
+      if (progress === 0) {
+        nextStatus = "Not Started";
+      } else if (progress === 100) {
+        nextStatus = "Completed";
+      } else if (selected.status === "Not Started" || selected.status === "Completed") {
+        nextStatus = "In Progress";
+      }
+
+      try {
+        await api(`/clients/${clientId}/steps/${stepId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ done: event.target.checked }),
+        });
+
+        if (nextStatus !== selected.status) {
+          await api(`/clients/${clientId}/status`, {
+            method: "PATCH",
+            body: JSON.stringify({ status: nextStatus }),
+          });
         }
-      });
+
+        await refreshClients();
+        render();
+      } catch (error) {
+        reportError(error);
+      }
     });
   });
 
-  document.getElementById("add-part-form")?.addEventListener("submit", (event) => {
+  document.getElementById("add-part-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     const partName = toCleanString(formData.get("part"));
@@ -328,16 +401,19 @@ function wireDetailInteractions(clientId) {
       return;
     }
 
-    updateClient(clientId, (client) => {
-      client.parts.push({
-        id: crypto.randomUUID(),
-        name: partName,
-        status: "Not Started",
+    try {
+      await api(`/clients/${clientId}/parts`, {
+        method: "POST",
+        body: JSON.stringify({ name: partName }),
       });
-    });
+      await refreshClients();
+      render();
+    } catch (error) {
+      reportError(error);
+    }
   });
 
-  document.getElementById("add-step-form")?.addEventListener("submit", (event) => {
+  document.getElementById("add-step-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     const stepTitle = toCleanString(formData.get("step"));
@@ -345,16 +421,23 @@ function wireDetailInteractions(clientId) {
       return;
     }
 
-    updateClient(clientId, (client) => {
-      client.steps.push({
-        id: crypto.randomUUID(),
-        title: stepTitle,
-        done: false,
+    try {
+      await api(`/clients/${clientId}/steps`, {
+        method: "POST",
+        body: JSON.stringify({ title: stepTitle }),
       });
-      if (client.status === "Completed") {
-        client.status = "In Progress";
+      const refreshed = state.clients.find((client) => client.id === clientId);
+      if (refreshed?.status === "Completed") {
+        await api(`/clients/${clientId}/status`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "In Progress" }),
+        });
       }
-    });
+      await refreshClients();
+      render();
+    } catch (error) {
+      reportError(error);
+    }
   });
 }
 
@@ -365,92 +448,17 @@ function statusOptions(selected) {
     .join("");
 }
 
-function updateClient(clientId, updater) {
-  const client = state.clients.find((item) => item.id === clientId);
-  if (!client) {
-    return;
-  }
-
-  updater(client);
-  client.updatedAt = new Date().toISOString();
-  persistState();
-  render();
-}
-
-function persistState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.clients));
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return;
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return;
-    }
-
-    state.clients = parsed;
-  } catch {
-    state.clients = [];
-  }
-}
-
-function seedDemoData() {
+async function seedDemoData() {
   if (state.clients.length && !confirm("Demo data will be added to current data. Continue?")) {
     return;
   }
-
-  const demo = [
-    {
-      id: crypto.randomUUID(),
-      name: "Nova Freight",
-      contact: "Ivy Torres",
-      integrationType: "WMS + EDI",
-      priority: "High",
-      status: "In Progress",
-      parts: [
-        { id: crypto.randomUUID(), name: "Contract", status: "Completed" },
-        { id: crypto.randomUUID(), name: "API Credentials", status: "In Progress" },
-        { id: crypto.randomUUID(), name: "Data Mapping", status: "Not Started" },
-      ],
-      steps: [
-        { id: crypto.randomUUID(), title: "Kickoff", done: true },
-        { id: crypto.randomUUID(), title: "Access Provisioning", done: true },
-        { id: crypto.randomUUID(), title: "Endpoint Testing", done: false },
-        { id: crypto.randomUUID(), title: "Go-Live", done: false },
-      ],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-    {
-      id: crypto.randomUUID(),
-      name: "Titan Retail",
-      contact: "Lena Park",
-      integrationType: "WMS + API",
-      priority: "Critical",
-      status: "Blocked",
-      parts: [
-        { id: crypto.randomUUID(), name: "Security Review", status: "Blocked" },
-        { id: crypto.randomUUID(), name: "Sandbox", status: "Completed" },
-      ],
-      steps: [
-        { id: crypto.randomUUID(), title: "Requirements", done: true },
-        { id: crypto.randomUUID(), title: "Credential Exchange", done: false },
-        { id: crypto.randomUUID(), title: "Validation", done: false },
-      ],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ];
-
-  state.clients = [...demo, ...state.clients];
-  state.selectedClientId = demo[0].id;
-  persistState();
-  render();
+  try {
+    await api("/demo", { method: "POST" });
+    await refreshClients();
+    render();
+  } catch (error) {
+    reportError(error);
+  }
 }
 
 function escapeHtml(value) {
