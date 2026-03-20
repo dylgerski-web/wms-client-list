@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Big Arena Fulfillment Client List | Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="admin-page">
+    <div class="bg-grid" aria-hidden="true"></div>
+    <div class="bg-orb" aria-hidden="true"></div>
+    <div class="page">
+      <header class="header strip-panel">
+        <div>
+          <p class="eyebrow">Admin Console</p>
+          <h1>Big Arena Fulfillment Client List</h1>
+        </div>
+        <div class="header-actions">
+          <a class="ghost-btn nav-link" href="index.html">Landing Page</a>
+          <button id="seed-demo" class="ghost-btn" type="button">Load Demo Data</button>
+        </div>
+      </header>
+
+      <section class="add-panel panel">
+        <h2>Create Client Integration</h2>
+        <form id="client-form" class="form-grid">
+          <label>
+            Client Name
+            <input name="name" type="text" placeholder="Acme Logistics" required />
+          </label>
+          <label>
+            Contact
+            <input name="contact" type="text" placeholder="Jamie Smith" required />
+          </label>
+          <label>
+            Integration Type
+            <input name="integrationType" type="text" placeholder="WMS + API" required />
+          </label>
+          <label>
+            Priority
+            <select name="priority">
+              <option>Low</option>
+              <option selected>Medium</option>
+              <option>High</option>
+              <option>Critical</option>
+            </select>
+          </label>
+          <label class="wide">
+            Integration Parts (comma-separated)
+            <input
+              name="parts"
+              type="text"
+              placeholder="Contract, Sandbox Access, Mapping, Testing, Go-Live"
+              required
+            />
+          </label>
+          <label class="wide">
+            Integration Steps (comma-separated)
+            <input
+              name="steps"
+              type="text"
+              placeholder="Kickoff, Credentials Setup, Endpoint Configuration, Validation, Production Release"
+              required
+            />
+          </label>
+          <button class="primary-btn" type="submit">Create Client</button>
+        </form>
+      </section>
+
+      <section class="dashboard">
+        <aside class="panel summary">
+          <h2>Live Summary</h2>
+          <div class="kpis">
+            <article>
+              <h3>Total Clients</h3>
+              <p id="kpi-total">0</p>
+            </article>
+            <article>
+              <h3>In Progress</h3>
+              <p id="kpi-progress">0</p>
+            </article>
+            <article>
+              <h3>Blocked</h3>
+              <p id="kpi-blocked">0</p>
+            </article>
+            <article>
+              <h3>Completed</h3>
+              <p id="kpi-completed">0</p>
+            </article>
+          </div>
+          <div class="filters">
+            <label>
+              Search
+              <input id="search-input" type="text" placeholder="Search clients" />
+            </label>
+            <label>
+              Status
+              <select id="status-filter">
+                <option value="all">All</option>
+                <option value="Not Started">Not Started</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Blocked">Blocked</option>
+                <option value="On Hold">On Hold</option>
+                <option value="Completed">Completed</option>
+              </select>
+            </label>
+            <button id="clear-data" class="danger-btn" type="button">Clear All Data</button>
+          </div>
+        </aside>
+
+        <main class="panel">
+          <div class="clients-header">
+            <h2>Client Pipeline</h2>
+            <p id="client-count">0 clients shown</p>
+          </div>
+          <div id="clients-list" class="clients-list"></div>
+        </main>
+      </section>
+
+      <section class="panel detail-panel" id="detail-panel">
+        <h2>Client Detail</h2>
+        <p class="detail-empty">Select a client to inspect and update parts/steps.</p>
+      </section>
+    </div>
+
+    <template id="client-card-template">
+      <article class="client-card">
+        <header>
+          <div>
+            <h3 class="client-name"></h3>
+            <p class="client-meta"></p>
+          </div>
+          <span class="status-pill"></span>
+        </header>
+        <div class="progress-row">
+          <div class="progress-track">
+            <div class="progress-fill"></div>
+          </div>
+          <p class="progress-text"></p>
+        </div>
+        <p class="stage-line"></p>
+      </article>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
