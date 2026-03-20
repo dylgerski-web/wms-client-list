@@ -11,8 +11,29 @@ app.use(express.static(__dirname));
 
 const statusOptions = new Set(["Not Started", "In Progress", "Blocked", "On Hold", "Completed"]);
 
+function buildDbConfig() {
+  const uri = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL;
+  if (uri) {
+    return { uri };
+  }
+
+  const host = process.env.MYSQLHOST || process.env.MYSQL_HOST || process.env.DB_HOST;
+  const port = Number(process.env.MYSQLPORT || process.env.MYSQL_PORT || process.env.DB_PORT || 3306);
+  const user = process.env.MYSQLUSER || process.env.MYSQL_USER || process.env.DB_USER;
+  const password = process.env.MYSQLPASSWORD || process.env.MYSQL_PASSWORD || process.env.DB_PASSWORD || "";
+  const database = process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE || process.env.DB_NAME;
+
+  if (host && user && database) {
+    return { host, port, user, password, database };
+  }
+
+  throw new Error(
+    "Missing MySQL configuration. Set MYSQL_URL (or MYSQL_PUBLIC_URL / DATABASE_URL) or set MYSQLHOST, MYSQLUSER, MYSQLPASSWORD, and MYSQLDATABASE."
+  );
+}
+
 const pool = mysql.createPool({
-  uri: process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL,
+  ...buildDbConfig(),
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -362,8 +383,14 @@ app.use((error, req, res, next) => {
 });
 
 (async () => {
-  await initDb();
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  try {
+    await initDb();
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Startup failed while connecting to MySQL.");
+    console.error(error);
+    process.exit(1);
+  }
 })();
