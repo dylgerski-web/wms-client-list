@@ -242,18 +242,21 @@ function renderDetail() {
   }
 
   const partsMarkup = client.parts
+    .sort((a, b) => (a.position || 0) - (b.position || 0))
     .map(
       (part) => `
-      <div class="list-item" data-part-id="${part.id}">
-        <div>
+      <div class="list-item" data-part-id="${part.id}" draggable="true" style="cursor: grab; user-select: none;">
+        <div style="pointer-events: none;">
           <strong>${escapeHtml(part.name)}</strong>
           <br />
           <small>Status: ${escapeHtml(part.status)}</small>
-          ${part.status !== "Not Started" ? `<textarea class="part-notes" data-part-id="${part.id}" placeholder="Add notes..." style="margin-top: 8px; width: 100%; min-height: 80px; resize: vertical;">${escapeHtml(part.notes || "")}</textarea>` : ''}
         </div>
-        <select class="slim part-status-select" data-part-id="${part.id}">
-          ${statusOptions(part.status)}
-        </select>
+        <div style="pointer-events: auto;">
+          ${part.status !== "Not Started" ? `<textarea class="part-notes" data-part-id="${part.id}" placeholder="Add notes..." style="margin-top: 8px; width: 100%; min-height: 80px; resize: vertical; pointer-events: auto;" draggable="false">${escapeHtml(part.notes || "")}</textarea>` : ''}
+          <select class="slim part-status-select" data-part-id="${part.id}" draggable="false" style="pointer-events: auto;">
+            ${statusOptions(part.status)}
+          </select>
+        </div>
       </div>
     `
     )
@@ -304,6 +307,84 @@ function wireDetailInteractions(clientId) {
     }
   });
 
+  let draggedPartId = null;
+  const listContainer = document.querySelector(".list");
+
+  document.querySelectorAll(".list-item").forEach((item) => {
+    item.addEventListener("dragstart", (event) => {
+      draggedPartId = event.currentTarget.dataset.partId;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/html", event.currentTarget.innerHTML);
+      event.currentTarget.style.opacity = "0.5";
+      console.log("Drag started for:", draggedPartId);
+    });
+
+    item.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      event.currentTarget.style.borderTop = "2px solid var(--neon)";
+    });
+
+    item.addEventListener("dragleave", (event) => {
+      event.currentTarget.style.borderTop = "none";
+    });
+
+    item.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.currentTarget.style.borderTop = "none";
+
+      // Capture the target part ID immediately to prevent null reference errors
+      const targetPartId = event.currentTarget.dataset.partId;
+      console.log("Drop detected. Dragged:", draggedPartId, "Target:", targetPartId);
+
+      if (draggedPartId && draggedPartId !== targetPartId) {
+        const client = state.clients.find(c => c.id === clientId);
+        const draggedPart = client.parts.find(p => p.id === draggedPartId);
+        const targetPart = client.parts.find(p => p.id === targetPartId);
+
+        if (!draggedPart || !targetPart) {
+          console.error("Could not find parts to reorder");
+          return;
+        }
+
+        // Ensure positions are numbers
+        const draggedPos = draggedPart.position || 0;
+        const targetPos = targetPart.position || 0;
+
+        // Simple swap
+        draggedPart.position = targetPos;
+        targetPart.position = draggedPos;
+
+        // Update positions on server
+        try {
+          console.log("Updating positions:", draggedPartId, "->", draggedPart.position, targetPartId, "->", targetPart.position);
+          await api(`/clients/${clientId}/parts/${draggedPartId}/position`, {
+            method: "PATCH",
+            body: JSON.stringify({ position: draggedPart.position }),
+          });
+          await api(`/clients/${clientId}/parts/${targetPartId}/position`, {
+            method: "PATCH",
+            body: JSON.stringify({ position: targetPart.position }),
+          });
+          console.log("Reorder successful!");
+          await refreshClients();
+          render();
+        } catch (error) {
+          console.error("Failed to reorder steps:", error);
+          reportError(error);
+        }
+      }
+    });
+
+    item.addEventListener("dragend", (event) => {
+      event.currentTarget.style.opacity = "1";
+      event.currentTarget.style.borderTop = "none";
+      draggedPartId = null;
+      console.log("Drag ended");
+    });
+  });
+
   document.querySelectorAll(".part-status-select").forEach((select) => {
     select.addEventListener("change", async (event) => {
       const partId = event.target.dataset.partId;
@@ -326,12 +407,12 @@ function wireDetailInteractions(clientId) {
       const partId = event.target.dataset.partId;
       const notes = event.target.value;
 
-      // Clear existing timer
+      // Clear existing timer for debounce
       if (noteTimers.has(partId)) {
         clearTimeout(noteTimers.get(partId));
       }
 
-      // Set new timer for debounced save (save after 1 second of no input)
+      // Set new timer for immediate save with minimal debounce (100ms for better UX)
       const timer = setTimeout(async () => {
         try {
           await api(`/clients/${clientId}/parts/${partId}/notes`, {
@@ -342,7 +423,7 @@ function wireDetailInteractions(clientId) {
         } catch (error) {
           console.error("Failed to save notes:", error);
         }
-      }, 1000);
+      }, 100);
 
       noteTimers.set(partId, timer);
     });

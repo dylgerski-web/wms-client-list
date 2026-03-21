@@ -128,6 +128,7 @@ function mapClients(rows, partRows, stepRows) {
       name: row.name,
       status: row.status,
       notes: row.notes || "",
+      position: row.position,
     });
   }
 
@@ -265,6 +266,23 @@ app.patch("/api/clients/:clientId/parts/:partId/notes", async (req, res) => {
   const now = new Date();
   await pool.query("UPDATE client_parts SET notes = ?, updated_at = ? WHERE id = ? AND client_id = ?", [
     notes || "",
+    now,
+    req.params.partId,
+    req.params.clientId,
+  ]);
+  await pool.query("UPDATE clients SET updated_at = ? WHERE id = ?", [now, req.params.clientId]);
+  res.json({ ok: true });
+});
+
+app.patch("/api/clients/:clientId/parts/:partId/position", async (req, res) => {
+  const { position } = req.body || {};
+  if (position === null || position === undefined) {
+    return res.status(400).json({ error: "Position is required." });
+  }
+
+  const now = new Date();
+  await pool.query("UPDATE client_parts SET position = ?, updated_at = ? WHERE id = ? AND client_id = ?", [
+    position,
     now,
     req.params.partId,
     req.params.clientId,
