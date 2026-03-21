@@ -259,20 +259,6 @@ function renderDetail() {
     )
     .join("");
 
-  const stepsMarkup = client.steps
-    .map(
-      (step) => `
-      <div class="list-item" data-step-id="${step.id}">
-        <label>
-          <input type="checkbox" class="step-toggle" data-step-id="${step.id}" ${step.done ? "checked" : ""} />
-          ${escapeHtml(step.title)}
-        </label>
-        <small>${step.done ? "Done" : "Pending"}</small>
-      </div>
-    `
-    )
-    .join("");
-
   el.detailPanel.innerHTML = `
     <h2>Client Detail</h2>
     <div class="detail-title">

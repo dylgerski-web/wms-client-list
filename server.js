@@ -94,6 +94,18 @@ async function initDb() {
         CONSTRAINT fk_steps_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
+
+    // Add notes column to client_parts if it doesn't exist
+    try {
+      await conn.query(`
+        ALTER TABLE client_parts ADD COLUMN notes LONGTEXT
+      `);
+    } catch (error) {
+      // Column might already exist, that's fine
+      if (!error.message.includes('Duplicate column')) {
+        throw error;
+      }
+    }
   } finally {
     conn.release();
   }
