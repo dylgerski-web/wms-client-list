@@ -1,3 +1,4 @@
+require("dotenv").config();
 const path = require("path");
 const express = require("express");
 const mysql = require("mysql2/promise");
@@ -12,9 +13,20 @@ app.use(express.static(__dirname));
 const statusOptions = new Set(["Not Started", "In Progress", "Blocked", "On Hold", "Completed"]);
 
 function buildDbConfig() {
-  const uri = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL;
+  const uri = process.env.MYSQL_PUBLIC_URL || process.env.MYSQL_URL || process.env.DATABASE_URL;
   if (uri) {
-    return { uri };
+    try {
+      const url = new URL(uri);
+      return {
+        host: url.hostname,
+        port: url.port || 3306,
+        user: url.username,
+        password: url.password,
+        database: url.pathname.substring(1),
+      };
+    } catch (error) {
+      console.error("Failed to parse MySQL URL:", error.message);
+    }
   }
 
   const host = process.env.MYSQLHOST || process.env.MYSQL_HOST || process.env.DB_HOST;
@@ -62,6 +74,7 @@ async function initDb() {
         client_id VARCHAR(36) NOT NULL,
         name VARCHAR(255) NOT NULL,
         status VARCHAR(32) NOT NULL,
+        notes LONGTEXT,
         position INT NOT NULL,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
@@ -102,6 +115,7 @@ function mapClients(rows, partRows, stepRows) {
       id: row.id,
       name: row.name,
       status: row.status,
+      notes: row.notes || "",
     });
   }
 
@@ -226,6 +240,19 @@ app.patch("/api/clients/:clientId/parts/:partId", async (req, res) => {
   const now = new Date();
   await pool.query("UPDATE client_parts SET status = ?, updated_at = ? WHERE id = ? AND client_id = ?", [
     status,
+    now,
+    req.params.partId,
+    req.params.clientId,
+  ]);
+  await pool.query("UPDATE clients SET updated_at = ? WHERE id = ?", [now, req.params.clientId]);
+  res.json({ ok: true });
+});
+
+app.patch("/api/clients/:clientId/parts/:partId/notes", async (req, res) => {
+  const { notes } = req.body || {};
+  const now = new Date();
+  await pool.query("UPDATE client_parts SET notes = ?, updated_at = ? WHERE id = ? AND client_id = ?", [
+    notes || "",
     now,
     req.params.partId,
     req.params.clientId,
@@ -368,6 +395,10 @@ app.post("/api/demo", async (req, res) => {
 app.delete("/api/clients", async (req, res) => {
   await pool.query("DELETE FROM clients");
   res.json({ ok: true });
+});
+
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
 });
 
 app.get("*", (req, res) => {

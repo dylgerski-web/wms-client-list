@@ -72,11 +72,11 @@ async function handleCreateClient(event) {
     integrationType: toCleanString(formData.get("integrationType")),
     priority: toCleanString(formData.get("priority")),
     parts: parseCsvItems(formData.get("parts")),
-    steps: parseCsvItems(formData.get("steps")),
+    steps: [],
   };
 
-  if (!payload.name || payload.parts.length === 0 || payload.steps.length === 0) {
-    alert("Please provide client name, at least one part, and at least one step.");
+  if (!payload.name || payload.parts.length === 0) {
+    alert("Please provide client name and at least one part.");
     return;
   }
 
@@ -87,7 +87,9 @@ async function handleCreateClient(event) {
     });
 
     state.selectedClientId = created.id;
-    event.currentTarget.reset();
+    if (event.currentTarget) {
+      event.currentTarget.reset();
+    }
     await refreshClients();
     render();
   } catch (error) {
@@ -247,6 +249,7 @@ function renderDetail() {
           <strong>${escapeHtml(part.name)}</strong>
           <br />
           <small>Status: ${escapeHtml(part.status)}</small>
+          ${part.status !== "Not Started" ? `<textarea class="part-notes" data-part-id="${part.id}" placeholder="Add notes..." style="margin-top: 8px; width: 100%; min-height: 80px; resize: vertical;">${escapeHtml(part.notes || "")}</textarea>` : ''}
         </div>
         <select class="slim part-status-select" data-part-id="${part.id}">
           ${statusOptions(part.status)}
@@ -287,25 +290,14 @@ function renderDetail() {
       </div>
     </div>
 
-    <div class="detail-grid">
-      <section class="block">
-        <h3>Integration Parts</h3>
-        <div class="list">${partsMarkup || "<p>No parts yet.</p>"}</div>
-        <form id="add-part-form" class="inline-form">
-          <input type="text" name="part" placeholder="Add part" required />
-          <button class="ghost-btn" type="submit">Add</button>
-        </form>
-      </section>
-
-      <section class="block">
-        <h3>Integration Steps</h3>
-        <div class="list">${stepsMarkup || "<p>No steps yet.</p>"}</div>
-        <form id="add-step-form" class="inline-form">
-          <input type="text" name="step" placeholder="Add step" required />
-          <button class="ghost-btn" type="submit">Add</button>
-        </form>
-      </section>
-    </div>
+    <section class="block">
+      <h3>Integration Steps</h3>
+      <div class="list">${partsMarkup || "<p>No parts yet.</p>"}</div>
+      <form id="add-part-form" class="inline-form">
+        <input type="text" name="part" placeholder="Add step" required />
+        <button class="ghost-btn" type="submit">Add</button>
+      </form>
+    </section>
   `;
 
   wireDetailInteractions(client.id);
@@ -342,54 +334,31 @@ function wireDetailInteractions(clientId) {
     });
   });
 
-  document.querySelectorAll(".step-toggle").forEach((checkbox) => {
-    checkbox.addEventListener("change", async (event) => {
-      const stepId = event.target.dataset.stepId;
-      const selected = getSelectedClient();
-      if (!selected) {
-        return;
+  const noteTimers = new Map();
+  document.querySelectorAll(".part-notes").forEach((textarea) => {
+    textarea.addEventListener("input", async (event) => {
+      const partId = event.target.dataset.partId;
+      const notes = event.target.value;
+
+      // Clear existing timer
+      if (noteTimers.has(partId)) {
+        clearTimeout(noteTimers.get(partId));
       }
 
-      const simulated = {
-        ...selected,
-        steps: selected.steps.map((step) =>
-          step.id === stepId
-            ? {
-                ...step,
-                done: event.target.checked,
-              }
-            : step
-        ),
-      };
-
-      let nextStatus = selected.status;
-      const progress = getProgress(simulated);
-      if (progress === 0) {
-        nextStatus = "Not Started";
-      } else if (progress === 100) {
-        nextStatus = "Completed";
-      } else if (selected.status === "Not Started" || selected.status === "Completed") {
-        nextStatus = "In Progress";
-      }
-
-      try {
-        await api(`/clients/${clientId}/steps/${stepId}`, {
-          method: "PATCH",
-          body: JSON.stringify({ done: event.target.checked }),
-        });
-
-        if (nextStatus !== selected.status) {
-          await api(`/clients/${clientId}/status`, {
+      // Set new timer for debounced save (save after 1 second of no input)
+      const timer = setTimeout(async () => {
+        try {
+          await api(`/clients/${clientId}/parts/${partId}/notes`, {
             method: "PATCH",
-            body: JSON.stringify({ status: nextStatus }),
+            body: JSON.stringify({ notes }),
           });
+          noteTimers.delete(partId);
+        } catch (error) {
+          console.error("Failed to save notes:", error);
         }
+      }, 1000);
 
-        await refreshClients();
-        render();
-      } catch (error) {
-        reportError(error);
-      }
+      noteTimers.set(partId, timer);
     });
   });
 
@@ -406,33 +375,6 @@ function wireDetailInteractions(clientId) {
         method: "POST",
         body: JSON.stringify({ name: partName }),
       });
-      await refreshClients();
-      render();
-    } catch (error) {
-      reportError(error);
-    }
-  });
-
-  document.getElementById("add-step-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const stepTitle = toCleanString(formData.get("step"));
-    if (!stepTitle) {
-      return;
-    }
-
-    try {
-      await api(`/clients/${clientId}/steps`, {
-        method: "POST",
-        body: JSON.stringify({ title: stepTitle }),
-      });
-      const refreshed = state.clients.find((client) => client.id === clientId);
-      if (refreshed?.status === "Completed") {
-        await api(`/clients/${clientId}/status`, {
-          method: "PATCH",
-          body: JSON.stringify({ status: "In Progress" }),
-        });
-      }
       await refreshClients();
       render();
     } catch (error) {
